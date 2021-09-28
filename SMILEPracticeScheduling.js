@@ -1,93 +1,112 @@
 var EMAIL_COL = 1;
 var EMAIL_SENT_COL = 5;
 var EMAIL_SENT = 'EMAIL_SENT';
-var DEFAULT_EMAIL = 1;
 var SURVEY_TIME = 4;
 var INITIAL_DATE_COL = 5;
+var MID_POINT_DATE_COL = 11;
 var FINAL_DATE_COL = 19;
-
+var NUMBER_OF_HEADER_ROWS = 2;
 
 function checkEmailStatus()
 {
   const scheduleSheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
   //remove the top row and column headers
-  const scheduleData = scheduleSheet.getDataRange().getValues().slice(2);
-  scheduleData.forEach(x => {
-    const emailAddress = x[EMAIL_COL];
-    const surveyTime = x[SURVEY_TIME];
-    const currentTime = new Date();
-    let nextEmail = undefined;
-    for(let i = INITIAL_DATE_COL; i <= FINAL_DATE_COL; i += 2)
+  const scheduleData = scheduleSheet.getDataRange().getValues().slice(NUMBER_OF_HEADER_ROWS);
+  scheduleData.forEach((row, rowIndex) => {
+    const emailAddress = row[EMAIL_COL];
+    const surveyTimeHours = Utilities.formatDate(row[SURVEY_TIME], "EST", "HH");
+    const surveyTimeMinutes = Utilities.formatDate(row[SURVEY_TIME], "EST", "mm");
+    let nextEmail;
+    for(let column = INITIAL_DATE_COL; column <= FINAL_DATE_COL; column += 2)
     {
       //check if the 'email successful' column been set 
-      if(!x[i+1])
+      if(!row[column+1])
       {
-        //nextEmail = new Date(x[i]).setHours(surveyTime);
-        nextEmail = new Date(x[i]);
+        //build full date time
+        const emailDate = new Date(row[column])
+        emailDate.setHours(surveyTimeHours);
+        emailDate.setMinutes(surveyTimeMinutes);
+        nextEmail = {
+          date: emailDate,
+          logFn: (message) => {
+            const logRow = rowIndex+NUMBER_OF_HEADER_ROWS;
+            const logColumn = column+1;
+            //increment rows and columns because sheet isn't 0-indexed :[
+            scheduleSheet.getRange(logRow + 1, logColumn + 1).setValue(message);
+          },
+          emailInfo: getEmailTemplateInformation(column)
+          
+        };
         break;
       }
     }
-    if(currentTime > nextEmail){
-       console.log(emailAddress+' '+nextEmail);
-      //sendEmail(emailAddress)
+    
+    //only send email if its passed their next date + time
+    if(new Date() > nextEmail.date){
+      sendEmail(emailAddress, nextEmail.logFn, nextEmail.emailInfo);
     }
   });
 }
+
+function getEmailTemplateInformation(column)
+{
+  // get data from range
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var templateSheet = ss.getSheets()[1];
+  var emailTemplateSheet = templateSheet.getRange(1, 1, 2, 3);
+  let emailInfo;
+  switch(column)
+  {
+    case MID_POINT_DATE_COL:
+      emailInfo = emailTemplateSheet.getValues()[1];
+      break;
+    case FINAL_DATE_COL:
+      emailInfo = emailTemplateSheet.getValues()[2];
+      break;
+    default:
+      emailInfo = emailTemplateSheet.getValues()[0];
+  }
+  return emailInfo;
+}
+
 
 /*
 * Sends email, given the range that
 * triggered the email and they email type.
 */
-function sendEmail(email) {
-  try {
-    // get data from range
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var range = ss.getActiveRange();
-    var dataSheet = ss.getSheets()[0];
-    var dataRange = dataSheet.getRange(range.getRow(), 1, 1, range.getColumn() + 15);
-    var row = dataRange.getValues()[0];
-    // get relevent columns
-    var emailAddress = row[EMAIL_COL];
-    var emailSent = row[EMAIL_SENT_COL - 1]; // assumes verification column always follows activation column
-    // get email template
-    var templateSheet = ss.getSheets()[1];
-    var emailTemplateSheet = templateSheet.getRange(DEFAULT_EMAIL, 1, 1, 3);
-    var defaultTemplate = emailTemplateSheet.getValues()[0];
+function sendEmail(emailAddress, logFn, emailInfo) {
+  try {     
     // check if already sent
-    if (emailSent != EMAIL_SENT) {
-      MailApp.sendEmail({
-        to: emailAddress,
-        subject: emailTemplateSheet[0],
-        htmlBody: emailTemplateSheet[2],
-        //inlineImages: picArgs
-      });
-      dataSheet.getRange(range.getRow(), EMAIL_SENT_COL).setValue(EMAIL_SENT);
-      // Make sure the cell is updated right away in case the script is interrupted
-      SpreadsheetApp.flush();
-      range.setNote('Activated: ' + new Date()); 
-      return true;
-    } else {
-      displayError("This participant has already recieved this type of email. No email sent.");
-      return false;
-    }
+    MailApp.sendEmail({
+      to: emailAddress,
+      subject: emailInfo[0],
+      htmlBody: emailInfo[2],
+    });
+    logFn(EMAIL_SENT);
+    // Make sure the cell is updated right away in case the script is interrupted
+    SpreadsheetApp.flush();
+    return true;
   } catch (e) {
     displayError(e);
+    logFn(EMAIL_ERROR);
   }
 }
 
 function populateSurveySchedule()
 {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var range = ss.getActiveRange();
-  var dataSheet = ss.getSheets()[0];
-  var dataRange = dataSheet.getRange(range.getRow(), 1, 1, range.getColumn() + 15);
-  var row = dataRange.getValues()[0];
-  var initialDate = new Date(row[INITIAL_DATE_COL]);
-  for(let i = 1; i < 8; i++)
+  const scheduleSheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+  //remove the top row and column headers
+  const scheduleData = scheduleSheet.getDataRange().getValues().slice(NUMBER_OF_HEADER_ROWS);
+  scheduleData.forEach((row, rowIndex) => 
   {
-    const nextDate = new Date();
-    nextDate.setDate(initialDate.getDate() + i*7);
-    console.log(nextDate);
-    dataSheet.getRange(range.getRow(), INITIAL_DATE_COL + i*2 + 1).setValue(Utilities.formatDate(nextDate, "EST", "MM/dd/yyyy"));
-  }
+    var initialDate = new Date(row[INITIAL_DATE_COL]);
+    for(let i = 1; i < 8; i++)
+    {
+      if(!scheduleSheet.getRange(rowIndex+NUMBER_OF_HEADER_ROWS + 1, INITIAL_DATE_COL + i*2 + 1).getValue()){
+        const nextDate = new Date(initialDate);
+        nextDate.setDate(nextDate.getDate() + i*7);
+        scheduleSheet.getRange(rowIndex+NUMBER_OF_HEADER_ROWS + 1, INITIAL_DATE_COL + i*2 + 1).setValue(Utilities.formatDate(nextDate, "EST", "MM/dd/yyyy"));
+      }
+    }
+  });
 }
